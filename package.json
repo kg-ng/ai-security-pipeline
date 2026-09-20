@@ -1,0 +1,39 @@
+{
+  "name": "ai-security-pipeline",
+  "version": "0.1.0",
+  "description": "A generic, standalone AI-assisted security scanning pipeline: a Node/TypeScript CLI + GitHub Action that runs dependency and secret scans, then uses an LLM agent to triage findings by severity and suggest remediations.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "ai-security-pipeline": "./dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/cli.ts",
+    "scan": "tsx src/cli.ts scan",
+    "test": "vitest run",
+    "lint": "eslint . --ext .ts"
+  },
+  "dependencies": {
+    "commander": "^12.1.0",
+    "zod": "^3.23.8"
+  },
+  "optionalDependencies": {
+    "openai": "^4.68.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10",
+    "eslint": "^8.57.0",
+    "tsx": "^4.19.1",
+    "typescript": "^5.5.4",
+    "vitest": "^2.1.1"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
