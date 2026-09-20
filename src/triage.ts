@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type { Finding, TriagedFinding } from "./types.js";
 
 const SEVERITY_PRIORITY: Record<Finding["severity"], number> = {
@@ -8,6 +9,15 @@ const SEVERITY_PRIORITY: Record<Finding["severity"], number> = {
   info: 5,
 };
 
+/** Schema for the LLM's JSON response — guards against malformed or hallucinated output. */
+const TriageResponseSchema = z.array(
+  z.object({
+    id: z.string(),
+    priority: z.number().int().min(1).max(5),
+    recommendation: z.string().min(1),
+  }),
+);
+
 /** Rule-based triage used whenever no LLM provider is configured, or as a fallback if the call fails. */
 function ruleBasedTriage(findings: Finding[]): TriagedFinding[] {
   return findings.map((finding) => ({
@@ -16,7 +26,9 @@ function ruleBasedTriage(findings: Finding[]): TriagedFinding[] {
     recommendation:
       finding.source === "dependency-audit"
         ? "Run `npm audit fix` (or bump the dependency manually) and re-scan."
-        : "Rotate the exposed credential immediately and remove it from git history.",
+        : finding.source === "secret-scan"
+          ? "Rotate the exposed credential immediately and remove it from git history."
+          : "Review and remediate the flagged code pattern before merging.",
   }));
 }
 
@@ -25,6 +37,11 @@ function ruleBasedTriage(findings: Finding[]): TriagedFinding[] {
  * suggestion. Uses an LLM (OpenAI) when `OPENAI_API_KEY` is set for more
  * nuanced recommendations; otherwise falls back to deterministic
  * rule-based triage so the pipeline works with zero external dependencies.
+ *
+ * The LLM's response is validated against a strict schema — any malformed,
+ * incomplete, or hallucinated output for a given finding falls back to the
+ * rule-based recommendation for just that finding, rather than failing the
+ * whole scan or silently trusting bad data.
  */
 export async function triageFindings(findings: Finding[]): Promise<TriagedFinding[]> {
   if (findings.length === 0) return [];
@@ -52,20 +69,31 @@ export async function triageFindings(findings: Finding[]): Promise<TriagedFindin
       temperature: 0,
     });
 
-    const raw = response.choices[0]?.message?.content ?? "";
-    const parsed = JSON.parse(raw) as Array<{ id: string; priority: number; recommendation: string }>;
-    const byId = new Map(parsed.map((p) => [p.id, p]));
+    const raw = response.choices[0]?.message?.content ?? "[]";
+    const parsedJson: unknown = JSON.parse(raw);
+    const validation = TriageResponseSchema.safeParse(parsedJson);
+
+    // If the LLM returned a shape we don't trust, fall back entirely rather
+    // than mixing validated and unvalidated data.
+    if (!validation.success) {
+      return ruleBasedTriage(findings);
+    }
+
+    const byId = new Map(validation.data.map((p) => [p.id, p]));
+    const fallback = ruleBasedTriage(findings);
+    const fallbackById = new Map(fallback.map((f) => [f.id, f]));
 
     return findings.map((finding) => {
       const triage = byId.get(finding.id);
+      const ruleBased = fallbackById.get(finding.id)!;
       return {
         ...finding,
-        priority: triage?.priority ?? SEVERITY_PRIORITY[finding.severity],
-        recommendation: triage?.recommendation ?? ruleBasedTriage([finding])[0].recommendation,
+        priority: triage?.priority ?? ruleBased.priority,
+        recommendation: triage?.recommendation ?? ruleBased.recommendation,
       };
     });
   } catch {
-    // Any LLM/parsing failure should never break the pipeline — fall back.
+    // Any LLM/network/parsing failure should never break the pipeline — fall back.
     return ruleBasedTriage(findings);
   }
 }

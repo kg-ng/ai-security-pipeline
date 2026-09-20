@@ -4,6 +4,7 @@ import { writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { runDependencyAudit } from "./scanners/dependencyAudit.js";
 import { runSecretScan } from "./scanners/secretScan.js";
+import { runCodePatternScan } from "./scanners/codePatternScan.js";
 import { triageFindings } from "./triage.js";
 import { renderMarkdownReport } from "./report.js";
 
@@ -26,12 +27,13 @@ program
   .action(async (opts: { path: string; output?: string; failOn: string }) => {
     const cwd = resolve(opts.path);
 
-    const [dependencyFindings, secretFindings] = await Promise.all([
+    const [dependencyFindings, secretFindings, codePatternFindings] = await Promise.all([
       runDependencyAudit(cwd),
       runSecretScan(cwd),
+      runCodePatternScan(cwd),
     ]);
 
-    const findings = [...dependencyFindings, ...secretFindings];
+    const findings = [...dependencyFindings, ...secretFindings, ...codePatternFindings];
     const triaged = await triageFindings(findings);
     const report = renderMarkdownReport(triaged, new Date().toISOString());
 

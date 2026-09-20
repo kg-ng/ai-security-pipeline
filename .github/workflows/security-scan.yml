@@ -4,6 +4,20 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_call:
+    inputs:
+      path:
+        description: "Path to the project to scan, relative to the caller's checkout."
+        type: string
+        default: "."
+      fail-on:
+        description: "Minimum severity that fails the check (critical|high|medium|low|info)."
+        type: string
+        default: "critical"
+    secrets:
+      OPENAI_API_KEY:
+        description: "Optional — enables LLM-based triage. Falls back to rule-based triage if unset."
+        required: false
 
 permissions:
   contents: read
@@ -15,18 +29,32 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Checkout ai-security-pipeline
+        uses: actions/checkout@v4
+        with:
+          repository: kg-ng/ai-security-pipeline
+          path: .ai-security-pipeline
+          ref: main
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      - run: npm ci
-      - run: npm run build
+      - name: Install and build the scanner
+        working-directory: .ai-security-pipeline
+        run: |
+          npm ci
+          npm run build
 
       - name: Run AI security scan
         id: scan
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: node dist/cli.js scan --path . --output report.md
+        run: >
+          node .ai-security-pipeline/dist/cli.js scan
+          --path "${{ inputs.path || '.' }}"
+          --fail-on "${{ inputs.fail-on || 'critical' }}"
+          --output report.md
         continue-on-error: true
 
       - name: Comment report on PR

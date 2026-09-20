@@ -2,7 +2,7 @@ export type Severity = "critical" | "high" | "medium" | "low" | "info";
 
 export interface Finding {
   id: string;
-  source: "dependency-audit" | "secret-scan";
+  source: "dependency-audit" | "secret-scan" | "code-pattern-scan";
   title: string;
   description: string;
   severity: Severity;

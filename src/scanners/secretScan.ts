@@ -2,7 +2,14 @@ import { readFile, readdir } from "node:fs/promises";
 import { join, relative } from "node:path";
 import type { Finding } from "../types.js";
 
-const IGNORED_DIRS = new Set(["node_modules", ".git", "dist", "build", "coverage", ".next"]);
+const IGNORED_DIRS = new Set(["node_modules", ".git", "dist", "build", "coverage", ".next", ".ai-security-pipeline"]);
+
+/**
+ * Test files intentionally contain "bad" fixtures to exercise the scanners
+ * themselves — scanning them would make this tool perpetually fail its own
+ * CI, so they're excluded by default.
+ */
+const TEST_FILE_PATTERN = /\.(?:test|spec)\.[jt]sx?$|(?:^|\/)__tests__\//;
 
 /** Common high-signal secret patterns; intentionally conservative to limit false positives. */
 const SECRET_PATTERNS: Array<{ name: string; regex: RegExp }> = [
@@ -20,7 +27,7 @@ async function collectFiles(dir: string, root: string, acc: string[]): Promise<v
     const fullPath = join(dir, entry.name);
     if (entry.isDirectory()) {
       await collectFiles(fullPath, root, acc);
-    } else if (entry.isFile()) {
+    } else if (entry.isFile() && !TEST_FILE_PATTERN.test(fullPath)) {
       acc.push(fullPath);
     }
   }
