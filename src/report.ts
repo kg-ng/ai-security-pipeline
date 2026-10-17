@@ -8,6 +8,11 @@ const SEVERITY_EMOJI: Record<TriagedFinding["severity"], string> = {
   info: "⚪",
 };
 
+/** Finding fields can come from scanned file names or LLM output; keep them inside one table cell. */
+function cell(text: string): string {
+  return text.replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+}
+
 /** Renders triaged findings as a Markdown report suitable for a PR comment or CI artifact. */
 export function renderMarkdownReport(findings: TriagedFinding[], scannedAt: string): string {
   if (findings.length === 0) {
@@ -18,7 +23,7 @@ export function renderMarkdownReport(findings: TriagedFinding[], scannedAt: stri
   const rows = sorted
     .map(
       (f) =>
-        `| ${SEVERITY_EMOJI[f.severity]} ${f.severity} | ${f.priority} | ${f.title} | ${f.recommendation} | ${f.location ?? "-"} |`,
+        `| ${SEVERITY_EMOJI[f.severity]} ${f.severity} | ${f.priority} | ${cell(f.title)} | ${cell(f.recommendation)} | ${cell(f.location ?? "-")} |`,
     )
     .join("\n");
 

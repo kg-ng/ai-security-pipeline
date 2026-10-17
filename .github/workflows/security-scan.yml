@@ -50,10 +50,13 @@ jobs:
         id: scan
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          # Passed through env, not interpolated into the script, so inputs cannot inject shell.
+          SCAN_PATH: ${{ inputs.path || '.' }}
+          SCAN_FAIL_ON: ${{ inputs.fail-on || 'critical' }}
         run: >
           node .ai-security-pipeline/dist/cli.js scan
-          --path "${{ inputs.path || '.' }}"
-          --fail-on "${{ inputs.fail-on || 'critical' }}"
+          --path "$SCAN_PATH"
+          --fail-on "$SCAN_FAIL_ON"
           --output report.md
         continue-on-error: true
 

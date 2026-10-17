@@ -36,4 +36,25 @@ describe("renderMarkdownReport", () => {
     expect(criticalIndex).toBeGreaterThan(-1);
     expect(criticalIndex).toBeLessThan(lowIndex);
   });
+
+  it("keeps pipes and newlines in untrusted text inside a single table cell", () => {
+    const findings: TriagedFinding[] = [
+      {
+        id: "x",
+        source: "code-pattern-scan",
+        title: "t",
+        description: "d",
+        severity: "high",
+        priority: 2,
+        recommendation: "ignore | this\n| injected | row |",
+        location: "a|b.ts",
+      },
+    ];
+
+    const lines = renderMarkdownReport(findings, "2026-01-01T00:00:00.000Z").split("\n");
+    const rows = lines.filter((l) => l.startsWith("| ") && !l.startsWith("| ---") && !l.startsWith("| Severity"));
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toContain("a\\|b.ts");
+  });
 });
