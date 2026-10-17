@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import { writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { runDependencyAudit } from "./scanners/dependencyAudit.js";
@@ -7,6 +7,7 @@ import { runSecretScan } from "./scanners/secretScan.js";
 import { runCodePatternScan } from "./scanners/codePatternScan.js";
 import { triageFindings } from "./triage.js";
 import { renderMarkdownReport } from "./report.js";
+import { SEVERITIES, hasBlockingFinding, parseFailOn } from "./gate.js";
 
 const program = new Command();
 
@@ -23,8 +24,13 @@ program
   .description("Run the security scan and print/write a Markdown report.")
   .option("-p, --path <path>", "path to the project to scan", ".")
   .option("-o, --output <file>", "write the report to a file instead of stdout")
-  .option("--fail-on <severity>", "exit non-zero if a finding at/above this severity is present", "critical")
+  .addOption(
+    new Option("--fail-on <severity>", "exit non-zero if a finding at/above this severity is present")
+      .choices([...SEVERITIES])
+      .default("critical"),
+  )
   .action(async (opts: { path: string; output?: string; failOn: string }) => {
+    const failOn = parseFailOn(opts.failOn);
     const cwd = resolve(opts.path);
 
     const [dependencyFindings, secretFindings, codePatternFindings] = await Promise.all([
@@ -43,11 +49,7 @@ program
       console.log(report);
     }
 
-    const severityOrder = ["critical", "high", "medium", "low", "info"];
-    const failIndex = severityOrder.indexOf(opts.failOn);
-    const hasBlockingFinding = triaged.some((f) => severityOrder.indexOf(f.severity) <= failIndex);
-
-    if (hasBlockingFinding) {
+    if (hasBlockingFinding(triaged, failOn)) {
       process.exitCode = 1;
     }
   });
