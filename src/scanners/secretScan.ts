@@ -4,12 +4,9 @@ import type { Finding } from "../types.js";
 
 const IGNORED_DIRS = new Set(["node_modules", ".git", "dist", "build", "coverage", ".next", ".ai-security-pipeline"]);
 
-/**
- * Test files intentionally contain "bad" fixtures to exercise the scanners
- * themselves — scanning them would make this tool perpetually fail its own
- * CI, so they're excluded by default.
- */
-const TEST_FILE_PATTERN = /\.(?:test|spec)\.[jt]sx?$|(?:^|\/)__tests__\//;
+// Test files are scanned too: real tokens are often pasted into tests. Fixtures that
+// need a fake secret should build it at runtime (e.g. "AKIA" + "...") so the source
+// file itself does not contain a match.
 
 /** Common high-signal secret patterns; intentionally conservative to limit false positives. */
 const SECRET_PATTERNS: Array<{ name: string; regex: RegExp }> = [
@@ -27,7 +24,7 @@ async function collectFiles(dir: string, root: string, acc: string[]): Promise<v
     const fullPath = join(dir, entry.name);
     if (entry.isDirectory()) {
       await collectFiles(fullPath, root, acc);
-    } else if (entry.isFile() && !TEST_FILE_PATTERN.test(fullPath)) {
+    } else if (entry.isFile()) {
       acc.push(fullPath);
     }
   }
