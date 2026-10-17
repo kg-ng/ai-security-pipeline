@@ -3,7 +3,7 @@
 A generic, standalone security-scanning pipeline for Node/TypeScript projects.
 Runs dependency-vulnerability and leaked-secret scans, then uses an LLM agent
 (with a deterministic rule-based fallback) to triage findings by priority and
-suggest remediations — as a CLI and as a drop-in GitHub Action.
+suggest remediations — as a CLI and as a reusable GitHub workflow.
 
 ## Why
 
@@ -44,7 +44,7 @@ node dist/cli.js scan
 node dist/cli.js scan --path ../some-project --output report.md --fail-on high
 ```
 
-### As a GitHub Action (in this repo)
+### As a GitHub workflow (in this repo)
 
 See `.github/workflows/security-scan.yml` — runs on every pull request,
 posts the Markdown report as a PR comment, and fails the check if a blocking
