@@ -1,9 +1,8 @@
 name: AI Security Scan
 
+# Reusable workflow — call it from any repository (see README). This repository's own
+# CI calls it from ci.yml with the scanner code of the commit under test.
 on:
-  pull_request:
-  push:
-    branches: [main]
   workflow_call:
     inputs:
       path:
@@ -14,6 +13,18 @@ on:
         description: "Minimum severity that fails the check (critical|high|medium|low|info)."
         type: string
         default: "critical"
+      pipeline-ref:
+        description: "Tag, branch, or commit SHA of kg-ng/ai-security-pipeline to run. Pin it to the same ref as in `uses:`."
+        type: string
+        default: "main"
+      omit-dev:
+        description: "Skip devDependencies in the dependency audit."
+        type: boolean
+        default: false
+      comment-on-pr:
+        description: "Post (and keep updated) the report as a pull request comment."
+        type: boolean
+        default: true
     secrets:
       OPENAI_API_KEY:
         description: "Optional — enables LLM-based triage. Falls back to rule-based triage if unset."
@@ -26,24 +37,34 @@ permissions:
 jobs:
   scan:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout project
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Checkout ai-security-pipeline
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: kg-ng/ai-security-pipeline
+          ref: ${{ inputs.pipeline-ref }}
           path: .ai-security-pipeline
-          ref: main
+          persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 20
+          node-version: 24
+
+      - name: Enable pnpm/yarn for the dependency audit
+        env:
+          COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+        run: corepack enable || echo "Corepack unavailable; only npm projects can be audited."
 
       - name: Install and build the scanner
         working-directory: .ai-security-pipeline
         run: |
-          npm ci
+          npm ci --ignore-scripts --no-audit --no-fund
           npm run build
 
       - name: Run AI security scan
@@ -51,29 +72,82 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           # Passed through env, not interpolated into the script, so inputs cannot inject shell.
-          SCAN_PATH: ${{ inputs.path || '.' }}
-          SCAN_FAIL_ON: ${{ inputs.fail-on || 'critical' }}
-        run: >
-          node .ai-security-pipeline/dist/cli.js scan
-          --path "$SCAN_PATH"
-          --fail-on "$SCAN_FAIL_ON"
-          --output report.md
-        continue-on-error: true
+          SCAN_PATH: ${{ inputs.path }}
+          SCAN_FAIL_ON: ${{ inputs.fail-on }}
+          SCAN_OMIT_DEV: ${{ inputs.omit-dev && '--omit-dev' || '' }}
+          REPORT_PATH: ${{ runner.temp }}/ai-security-report.md
+        run: |
+          set +e
+          node .ai-security-pipeline/dist/cli.js scan \
+            --path "$SCAN_PATH" \
+            --fail-on "$SCAN_FAIL_ON" \
+            $SCAN_OMIT_DEV \
+            --output "$REPORT_PATH"
+          echo "exit-code=$?" >> "$GITHUB_OUTPUT"
 
+      - name: Publish job summary
+        if: always()
+        env:
+          REPORT_PATH: ${{ runner.temp }}/ai-security-report.md
+        run: |
+          if [ -f "$REPORT_PATH" ]; then
+            cat "$REPORT_PATH" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "⚠️ The AI security scan did not produce a report — see the scan step log." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload report
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ai-security-report
+          path: ${{ runner.temp }}/ai-security-report.md
+          if-no-files-found: ignore
+
+      # Fork PRs get a read-only token, so they rely on the job summary instead.
       - name: Comment report on PR
-        if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
+        if: >-
+          always() && inputs.comment-on-pr && github.event_name == 'pull_request'
+          && github.event.pull_request.head.repo.full_name == github.repository
+        continue-on-error: true
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          REPORT_PATH: ${{ runner.temp }}/ai-security-report.md
+          SCAN_PATH: ${{ inputs.path }}
         with:
           script: |
             const fs = require('fs');
-            const report = fs.readFileSync('report.md', 'utf8');
-            await github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: report,
-            });
+            // One comment per scanned path, updated in place on every push.
+            const marker = `<!-- ai-security-pipeline:${process.env.SCAN_PATH.replace(/--/g, '')} -->`;
+            const MAX_LENGTH = 60000; // GitHub rejects comments over 65536 characters
 
-      - name: Fail if scan reported blocking findings
-        if: steps.scan.outcome == 'failure'
-        run: exit 1
+            let body = fs.existsSync(process.env.REPORT_PATH)
+              ? fs.readFileSync(process.env.REPORT_PATH, 'utf8')
+              : '## 🛡️ AI Security Pipeline Report\n\n⚠️ The scan failed before producing a report — see the workflow logs.';
+            if (body.length > MAX_LENGTH) {
+              body = body.slice(0, body.lastIndexOf('\n', MAX_LENGTH)) +
+                '\n\n…report truncated. The full report is in the job summary and the `ai-security-report` artifact.';
+            }
+            body = `${marker}\n${body}`;
+
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number, per_page: 100 });
+            const existing = comments.find((c) => c.user?.type === 'Bot' && c.body?.startsWith(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
+
+      - name: Enforce the security gate
+        env:
+          SCAN_EXIT_CODE: ${{ steps.scan.outputs.exit-code }}
+          SCAN_FAIL_ON: ${{ inputs.fail-on }}
+        run: |
+          case "$SCAN_EXIT_CODE" in
+            0) echo "No findings at or above '$SCAN_FAIL_ON'." ;;
+            1) echo "::error::Blocking findings at or above '$SCAN_FAIL_ON' — see the report."; exit 1 ;;
+            *) echo "::error::The security scan failed to run (exit code ${SCAN_EXIT_CODE:-none})."; exit 1 ;;
+          esac
