@@ -1,6 +1,10 @@
 export * from "./types.js";
-export { runDependencyAudit } from "./scanners/dependencyAudit.js";
+export { runDependencyAudit, type DependencyAuditOptions } from "./scanners/dependencyAudit.js";
 export { runSecretScan } from "./scanners/secretScan.js";
 export { runCodePatternScan } from "./scanners/codePatternScan.js";
+export { listProjectFiles, INLINE_IGNORE_MARKER, type ScanOptions } from "./scanners/files.js";
 export { triageFindings } from "./triage.js";
-export { renderMarkdownReport } from "./report.js";
+export { renderMarkdownReport, type ReportOptions } from "./report.js";
+export { renderSarifReport } from "./sarif.js";
+export { IGNORE_FILE_NAME, applyIgnoreList, loadIgnoreFile } from "./ignore.js";
+export { SEVERITIES, hasBlockingFinding, parseFailOn } from "./gate.js";
